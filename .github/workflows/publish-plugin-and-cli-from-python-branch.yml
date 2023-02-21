@@ -1,0 +1,102 @@
+name: "[M] Plugin and CLI: publish as archives"
+
+on: 
+  workflow_call:
+    inputs:
+        minor-release:
+          type: string
+          description: "It adds minor release indicator to version."
+          required: false
+          default: 'none'
+
+        version-postfix:
+          type: string
+          description: "It adds postfix (alpha or beta) to version (optional)."
+          required: false
+          default: no-postfix
+
+  workflow_dispatch:
+    inputs:
+        minor-release:
+          type: choice
+          description: "It adds minor release indicator to version."
+          required: true
+          default: 'none'
+          options:
+          - 'none'
+          - '1'
+          - '2'
+          - '3'
+          - '4'
+
+        version-postfix:
+          type: choice
+          description: "It adds alpha or beta postfix to version."
+          required: true
+          default: no-postfix-prod
+          options:
+          - no-postfix-prod
+          - no-postfix
+          - alpha
+          - beta
+
+env:
+  # Environment variable setting gradle options.
+  GRADLE_OPTS: "-XX:MaxHeapSize=2048m -Dorg.gradle.jvmargs='-XX:MaxHeapSize=2048m -XX:MaxPermSize=512m -Dorg.gradle.daemon=false' -Dorg.gradle.daemon=false"
+
+jobs:
+    publish_plugin_and_cli:
+      runs-on: ubuntu-20.04
+      container: unittestbot/java-env:java11-zulu-jdk-gradle7.4.2-kotlinc1.7.0
+      
+      steps:
+      - name: Print environment variables
+        run: printenv
+
+      - uses: actions/checkout@v3
+
+      - name: Set environment variables
+        run: |
+          # "You can make an environment variable available to any subsequent steps in a workflow job by 
+          # defining or updating the environment variable and writing this to the GITHUB_ENV environment file."
+          echo "VERSION="$(date +%Y).$(date +%-m).${GITHUB_RUN_NUMBER}"" >> $GITHUB_ENV
+          echo "POSTFIX=${{ github.event.inputs.version-postfix }}" >> $GITHUB_ENV
+
+      - name: Set production version
+        if: ${{ github.event.inputs.version-postfix == 'no-postfix-prod' || github.event.inputs.version-postfix == 'alpha' || github.event.inputs.version-postfix == 'beta' }}
+        run: |
+          echo "VERSION="$(date +%Y).$(date +%-m)"" >> $GITHUB_ENV
+
+      - name: Set version for minor release
+        if: ${{ github.event.inputs.minor-release != 'none' }}
+        run: |
+          echo "VERSION=${{ env.VERSION }}.${{ github.event.inputs.minor-release }}" >> $GITHUB_ENV
+
+      - name: Create version with postfix
+        if: ${{ (env.POSTFIX == 'alpha') || (env.POSTFIX == 'beta') }}
+        run:
+          echo "VERSION=${{ env.VERSION }}-${{ env.POSTFIX }}" >> $GITHUB_ENV
+
+      - name: Build UTBot IntelliJ IDEA plugin
+        run: |
+          gradle clean buildPlugin --no-daemon -PsemVer=${{ env.VERSION }}
+          cd utbot-intellij/build/distributions
+          unzip utbot-intellij-${{ env.VERSION }}.zip
+          rm utbot-intellij-${{ env.VERSION }}.zip
+
+      - name: Archive UTBot IntelliJ IDEA plugin
+        uses: actions/upload-artifact@v3
+        with:
+          name: utbot-intellij-${{ env.VERSION }}
+          path: utbot-intellij/build/distributions/*
+
+      - name: Build UTBot CLI
+        run: |
+          cd utbot-cli-python
+          gradle clean build --no-daemon -PsemVer=${{ env.VERSION }}
+          
+      - name: Archive UTBot CLI
+        uses: actions/upload-artifact@v3
+        with:
+          name: utbot-cli-python-${{ env.VERSION }}
+          path: utbot-cli-python/build/libs/utbot-cli-python-${{ env.VERSION }}.jar
